@@ -1,0 +1,9 @@
+ultralytics>=8.3.0
+matplotlib>=3.8.0
+pandas>=2.0.0
+PyYAML>=6.0.0
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+python-multipart>=0.0.9
+Pillow>=10.0.0
+requests>=2.32.0
