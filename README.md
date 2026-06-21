@@ -9,7 +9,6 @@ folders without calling the remote detection service.
 Credit to [Alexander Barnhill](https://github.com/alexanderbarnhill/) for the
 original project context and related work.
 
-
 ## Setup
 
 Create and activate a Python environment, then install the project dependencies:
