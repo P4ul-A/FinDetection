@@ -42,7 +42,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--dataset-root",
         type=Path,
-        default=Path("cropping_dataset"),
+        default=Path("rissos_cropping_dataset_jpeg"),
         help="Directory containing original/ images and yolo_labels/ labels.",
     )
     parser.add_argument(
