@@ -27,6 +27,7 @@ IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
 CLASS_NAMES = ["fin"]
 
 
+
 @dataclass(frozen=True)
 class DatasetItem:
     image_path: Path
