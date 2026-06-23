@@ -42,6 +42,7 @@ settings = {
     "identify_path": "/fin-identify",
     "keep_directory_structure": True,
     "max_retries": 10,
+    "request_timeout": 120,
     "vvi_path": "/vvi-detect",
     "do_vvi": True,
     "invalid_path": ".invalid"
@@ -58,6 +59,7 @@ class FinwaveGUI:
 
         self.is_running = False  # To track if pipeline is running
         self.thread = None  # To hold the pipeline thread
+        self.pipeline_events = queue.Queue()
 
         self.start_button = tk.Button(root, text="Start Pipeline", command=self.toggle_pipeline)
         self.start_button.pack(pady=5)
@@ -67,6 +69,17 @@ class FinwaveGUI:
 
         # Redirect log to the GUI
         self.setup_logging()
+        self.root.after(100, self.poll_pipeline_events)
+
+    def poll_pipeline_events(self):
+        while True:
+            try:
+                event, completed = self.pipeline_events.get_nowait()
+            except queue.Empty:
+                break
+            if event == "finished":
+                self.finish_pipeline(completed)
+        self.root.after(100, self.poll_pipeline_events)
 
     def setup_logging(self):
         log_queue = queue.Queue()
@@ -103,7 +116,7 @@ class FinwaveGUI:
             logger.info("Starting pipeline")
             self.is_running = True
             self.start_button.config(text="Stop Pipeline")  # Change button text to Stop
-            self.thread = threading.Thread(target=self.start_pipeline)
+            self.thread = threading.Thread(target=self.start_pipeline, daemon=True)
             self.thread.start()  # Start the pipeline in a new thread
         else:
             logger.info("Stopping pipeline")
@@ -112,29 +125,45 @@ class FinwaveGUI:
             # Optionally, signal the pipeline thread to stop here if needed
 
     def start_pipeline(self):
-        logger.info("Checking server connectivity...")
-        if not self.check_server(settings["base_url"]):
-            logger.error("Server is not reachable. Please check the base URL.")
-            return
+        completed = False
+        try:
+            logger.info("Checking server connectivity...")
+            if not self.check_server(settings["base_url"]):
+                logger.error("Server is not reachable. Please check the base URL.")
+                return
 
-        logger.info(f"Starting pipeline with settings: {settings}")
-        logger.info("Step 1: Data loading...")
-        args = Namespace(**settings)
-        images = get_images(args.input_directory)
-        logger.info(f"Found {len(images)} images")
-        for idx, path in list(enumerate(images)):
-            if not self.is_running:
-                logger.info("Pipeline stopped.")
-                break
-            logger.info(f"[{idx + 1} \t / \t {len(images)}] Processing {path}")
-            self.process_image(path, args)
+            logger.info(f"Starting pipeline with settings: {settings}")
+            logger.info("Step 1: Data loading...")
+            args = Namespace(**settings)
+            images = get_images(args.input_directory)
+            logger.info(f"Found {len(images)} images")
+            for idx, path in list(enumerate(images)):
+                if not self.is_running:
+                    logger.info("Pipeline stopped.")
+                    return
+                logger.info(f"[{idx + 1} \t / \t {len(images)}] Processing {path}")
+                self.process_image(path, args)
+            completed = True
+            logger.info("Pipeline finished.")
+        finally:
+            self.pipeline_events.put(("finished", completed))
+
+    def finish_pipeline(self, completed):
+        self.is_running = False
+        self.start_button.config(text="Start Pipeline")
 
     def process_image(self, image_path, ARGS, retry_count=0):
         url = ARGS.base_url + ARGS.detect_path
 
         if retry_count < ARGS.max_retries:
             try:
-                response = requests.post(url, files={'file': open(image_path, 'rb')}, verify=ARGS.verify)
+                with open(image_path, 'rb') as image_file:
+                    response = requests.post(
+                        url,
+                        files={'file': image_file},
+                        verify=ARGS.verify,
+                        timeout=ARGS.request_timeout,
+                    )
                 if response.status_code == 200:
                     content = json.loads(response.text)
                     response_content = content["response"]
@@ -169,7 +198,7 @@ class FinwaveGUI:
                     logger.error(f"Could not send photo to pipeline: {response.text}")
                     self.process_image(image_path, ARGS, retry_count + 1)
             except Exception as e:
-                logger.error(f"Connection error. Maybe retrying")
+                logger.error(f"Connection error. Maybe retrying: {e}")
                 self.process_image(image_path, ARGS, retry_count + 1)
         else:
             logger.error(f"Max retries reached for {image_path}")
@@ -239,7 +268,13 @@ def get_path_diff(path1, path2):
 
 def get_vvi(img_path, ARGS):
     url = ARGS.base_url + ARGS.vvi_path
-    response = requests.post(url, files={'file': open(img_path, 'rb')}, verify=ARGS.verify)
+    with open(img_path, 'rb') as image_file:
+        response = requests.post(
+            url,
+            files={'file': image_file},
+            verify=ARGS.verify,
+            timeout=ARGS.request_timeout,
+        )
     try:
         response_content = json.loads(response.content)["response"]
         return response_content["class"].lower() == "valid"
