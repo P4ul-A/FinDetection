@@ -5,9 +5,9 @@ normalized and absolute bounding boxes. This local server mirrors that response
 shape while using a locally trained Ultralytics YOLO model.
 
 Example:
-    python3 spawn_findetection_server.py
+    python3 scripts/spawn_findetection_server.py
 
-Then point fin_finder.py at:
+Then point scripts/fin_finder.py at:
     base_url = "http://127.0.0.1:8000/api/inference"
 """
 
@@ -246,7 +246,7 @@ def main() -> None:
     )
     app = create_app(service)
     LOGGER.info("Serving local fin detection model from %s", args.model_path)
-    LOGGER.info("Use base_url=http://%s:%s/api/inference in fin_finder.py", args.host, args.port)
+    LOGGER.info("Use base_url=http://%s:%s/api/inference in scripts/fin_finder.py", args.host, args.port)
     uvicorn.run(app, host=args.host, port=args.port, reload=args.reload)
 
 

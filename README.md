@@ -1,7 +1,7 @@
 # Local FinDetection
 
 FinDetection trains a local YOLO model to detect fins, serves that model through a
-Finwave-compatible API, and lets `fin_finder.py` crop detected fins from image
+Finwave-compatible API, and lets `scripts/fin_finder.py` crop detected fins from image
 folders without calling the remote detection service.
 
 ## Attribution
@@ -18,6 +18,30 @@ python3 -m venv .venv
 source .venv/bin/activate
 python3 -m pip install -r requirements.txt
 ```
+
+## Desktop Tool
+
+For day-to-day use without the command line, open:
+
+```text
+LaunchFinDetectionTool.command
+```
+
+On first launch, the command checks the local Python environment and installs
+missing packages from `requirements.txt` if needed.
+
+The desktop tool lets you:
+
+- choose an input folder
+- choose an output folder
+- optionally convert source images to JPEG first
+- choose the Risso or Orca recognition model
+- start the local recognition server
+- run the fin-cropping pipeline with progress feedback
+
+If preprocessing is enabled, intermediate JPEGs are saved under
+`preprocessed_images` inside the selected output folder. Fin crops are saved in
+the selected output folder while preserving the input folder structure.
 
 ## Dataset Layout
 
@@ -41,11 +65,11 @@ The training dataset was taken from [Alexander Barnhill work](https://zenodo.org
 
 ## Training
 
-Use [train_findetection.py](train_findetection.py) to prepare a YOLO-compatible
+Use [scripts/train_findetection.py](scripts/train_findetection.py) to prepare a YOLO-compatible
 dataset split and fine tune a pretrained YOLO model.
 
 ```bash
-python3 train_findetection.py
+python3 scripts/train_findetection.py
 ```
 
 By default, it:
@@ -60,9 +84,9 @@ By default, it:
 Useful options:
 
 ```bash
-python3 train_findetection.py --model yolov8n.pt --epochs 100 --device mps
-python3 train_findetection.py --skip-train
-python3 train_findetection.py --copy-mode copy
+python3 scripts/train_findetection.py --model yolov8n.pt --epochs 100 --device mps
+python3 scripts/train_findetection.py --skip-train
+python3 scripts/train_findetection.py --copy-mode copy
 ```
 
 Important outputs:
@@ -77,11 +101,11 @@ runs/findetection_training/fin_yolo/training_summary.json
 
 ## Local Detection Server
 
-Use [spawn_findetection_server.py](spawn_findetection_server.py) after training
+Use [scripts/spawn_findetection_server.py](scripts/spawn_findetection_server.py) after training
 has produced `best.pt`.
 
 ```bash
-python3 spawn_findetection_server.py
+python3 scripts/spawn_findetection_server.py
 ```
 
 The server defaults to:
@@ -93,15 +117,15 @@ http://127.0.0.1:8000/api/inference
 and loads:
 
 ```text
-deployment_model.pt
+deployment_model_risso.pt
 ```
 
 Override the model path or device when needed:
 
 ```bash
-python3 spawn_findetection_server.py --model-path path/to/best.pt
-python3 spawn_findetection_server.py --device mps
-python3 spawn_findetection_server.py --host 0.0.0.0 --port 8000
+python3 scripts/spawn_findetection_server.py --model-path path/to/best.pt
+python3 scripts/spawn_findetection_server.py --device mps
+python3 scripts/spawn_findetection_server.py --host 0.0.0.0 --port 8000
 ```
 
 The local `/fin-detect` endpoint mirrors the remote Finwave response shape:
@@ -126,11 +150,11 @@ returns crops as valid.
 
 ## Cropping Pipeline
 
-Use [fin_finder.py](fin_finder.py) to process image folders through the local
+Use [scripts/fin_finder.py](scripts/fin_finder.py) to process image folders through the local
 detection server and save cropped fin images.
 
 ```bash
-python3 fin_finder.py
+python3 scripts/fin_finder.py
 ```
 
 The GUI lets you set input and output directories. The default detection base
@@ -140,4 +164,4 @@ URL is:
 http://127.0.0.1:8000/api/inference
 ```
 
-Start `spawn_findetection_server.py` before starting the pipeline.
+Start `scripts/spawn_findetection_server.py` before starting the pipeline.
