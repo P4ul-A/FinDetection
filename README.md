@@ -1,13 +1,22 @@
 # Local FinDetection
 
-FinDetection trains a local YOLO model to detect fins, serves that model through a
-Finwave-compatible API, and lets `scripts/fin_finder.py` crop detected fins from image
+This repository contains all scripts necessary to train a local YOLO model to detect fins, serve that model through a Finwave-compatible API, and lets `scripts/fin_finder.py` crop detected fins from image
 folders without calling the remote detection service.
+
+There is an easy to use desktop app build on top of the scripts to enable easy use everyday.
+
+![FinDetection app](assets/app.png)
+
+
+**Warning:** A LOT of vibe coding has been used. Please enjoy with caution ;)
 
 ## Attribution
 
 Credit to [Alexander Barnhill](https://github.com/alexanderbarnhill/) for the
 original project context and related work.
+
+In collaboration with [Norwegian Orca Project](https://www.norwegianorcasurvey.no/).
+
 
 ## Setup
 
@@ -34,7 +43,8 @@ The desktop tool lets you:
 
 - choose an input folder
 - choose an output folder
-- optionally convert source images to JPEG first
+- run preprocessing only, fin detection only, or both
+- set JPEG quality for preprocessing
 - choose the Risso or Orca recognition model
 - start the local recognition server
 - run the fin-cropping pipeline with progress feedback

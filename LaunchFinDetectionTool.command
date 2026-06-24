@@ -1,9 +1,12 @@
 #!/bin/zsh
 set -e
+unsetopt bgnice 2>/dev/null || true
 
 cd -- "$(dirname "$0")"
 
 REQUIREMENTS_FILE="requirements.txt"
+APP_LOG_DIR="${TMPDIR:-/tmp}/findetection"
+APP_LOG_FILE="$APP_LOG_DIR/findetection_app.log"
 
 show_error_and_pause() {
   echo ""
@@ -134,4 +137,54 @@ then
   exit 1
 fi
 
-exec "$PYTHON" findetection_app.py
+mkdir -p "$APP_LOG_DIR"
+echo "Starting FinDetection..."
+"$PYTHON" - "$APP_LOG_FILE" "$(pwd)" "$(tty 2>/dev/null || true)" <<'PY'
+import subprocess
+import sys
+import time
+
+log_path, app_dir, terminal_tty = sys.argv[1:4]
+
+with open(log_path, "ab") as log_file:
+    process = subprocess.Popen(
+        [sys.executable, "findetection_app.py"],
+        cwd=app_dir,
+        stdin=subprocess.DEVNULL,
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+
+time.sleep(0.5)
+if process.poll() is not None:
+    print("FinDetection failed to start. Log file:")
+    print(log_path)
+    sys.exit(1)
+
+if terminal_tty.startswith("/dev/"):
+    apple_script = f'''
+delay 0.4
+tell application "Terminal"
+  repeat with terminalWindow in windows
+    repeat with terminalTab in tabs of terminalWindow
+      if tty of terminalTab is "{terminal_tty}" then
+        close terminalWindow
+        return
+      end if
+    end repeat
+  end repeat
+end tell
+'''
+    try:
+        subprocess.Popen(
+            ["osascript", "-e", apple_script],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError:
+        pass
+PY
+exit 0

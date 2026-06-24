@@ -105,6 +105,8 @@ class PipelineConfig:
     input_dir: Path
     output_dir: Path
     preprocess: bool
+    fin_detection: bool
+    jpeg_quality: int
     base_url: str = DEFAULT_BASE_URL
 
 
@@ -113,6 +115,7 @@ class PipelineSummary:
     completed: bool
     converted: int = 0
     conversion_failed: int = 0
+    preprocessing_failed_files: tuple[str, ...] = ()
     processed: int = 0
     crops_saved: int = 0
     detection_failed: int = 0
@@ -144,6 +147,8 @@ class FinDetectionApp:
         self.input_dir_var = tk.StringVar()
         self.output_dir_var = tk.StringVar()
         self.preprocess_var = tk.BooleanVar(value=False)
+        self.fin_detection_var = tk.BooleanVar(value=True)
+        self.jpeg_quality_var = tk.IntVar(value=DEFAULT_JPEG_QUALITY)
         self.model_var = tk.StringVar(value="Risso")
         self.server_status_var = tk.StringVar(value="Server stopped")
         self.pipeline_status_var = tk.StringVar(value="Ready")
@@ -331,11 +336,36 @@ class FinDetectionApp:
             width=16,
         )
         self.model_combo.grid(row=3, column=1, sticky="w", pady=(12, 0))
+
+        mode_frame = ttk.Frame(setup_panel, style="Panel.TFrame")
+        mode_frame.grid(row=3, column=2, sticky="e", pady=(12, 0))
         ttk.Checkbutton(
-            setup_panel,
-            text="Use picture preprocessing first",
+            mode_frame,
+            text="Preprocessing",
             variable=self.preprocess_var,
-        ).grid(row=3, column=2, sticky="e", pady=(12, 0))
+        ).pack(side=tk.LEFT, padx=(0, 14))
+        ttk.Checkbutton(
+            mode_frame,
+            text="Fin detection",
+            variable=self.fin_detection_var,
+        ).pack(side=tk.LEFT)
+
+        quality_frame = ttk.Frame(setup_panel, style="Panel.TFrame")
+        quality_frame.grid(row=4, column=0, columnspan=3, sticky="w", pady=(12, 0))
+        ttk.Label(quality_frame, text="JPEG quality", style="Body.TLabel").pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Spinbox(
+            quality_frame,
+            from_=1,
+            to=95,
+            increment=1,
+            textvariable=self.jpeg_quality_var,
+            width=6,
+        ).pack(side=tk.LEFT)
+        ttk.Label(
+            quality_frame,
+            text="Used when preprocessing is enabled",
+            style="Muted.TLabel",
+        ).pack(side=tk.LEFT, padx=(10, 0))
 
         action_panel = self._panel(main)
         action_panel.grid(row=3, column=0, sticky="ew", pady=(0, 14))
@@ -740,7 +770,7 @@ class FinDetectionApp:
         config = self.read_pipeline_config()
         if config is None:
             return
-        if not is_server_reachable(config.base_url, timeout=1.5):
+        if config.fin_detection and not is_server_reachable(config.base_url, timeout=1.5):
             if self.server_process is not None and self.server_process.poll() is None:
                 self.pending_pipeline_start = True
                 self.pending_pipeline_config = config
@@ -797,10 +827,29 @@ class FinDetectionApp:
             messagebox.showerror("Output folder error", f"Could not create output folder:\n{exc}")
             return None
 
+        preprocess = self.preprocess_var.get()
+        fin_detection = self.fin_detection_var.get()
+        if not preprocess and not fin_detection:
+            messagebox.showerror(
+                "Choose a pipeline step",
+                "Turn on preprocessing, fin detection, or both before starting the pipeline.",
+            )
+            return None
+
+        jpeg_quality = DEFAULT_JPEG_QUALITY
+        if preprocess:
+            try:
+                jpeg_quality = validate_jpeg_quality(self.jpeg_quality_var.get())
+            except (ValueError, tk.TclError) as exc:
+                messagebox.showerror("JPEG quality error", str(exc))
+                return None
+
         return PipelineConfig(
             input_dir=input_dir,
             output_dir=output_dir,
-            preprocess=self.preprocess_var.get(),
+            preprocess=preprocess,
+            fin_detection=fin_detection,
+            jpeg_quality=jpeg_quality,
         )
 
     def run_pipeline(self, config: PipelineConfig) -> None:
@@ -810,20 +859,26 @@ class FinDetectionApp:
             working_input = config.input_dir
             converted = 0
             conversion_failed = 0
+            preprocessing_failed_files: tuple[str, ...] = ()
             preprocessed_dir = None
 
             self.post("log", f"Input folder: {config.input_dir}")
             self.post("log", f"Output folder: {config.output_dir}")
 
             if config.preprocess:
-                converted, conversion_failed, preprocessed_dir = self.run_preprocessing(config)
+                converted, conversion_failed, preprocessed_dir, preprocessing_failed_files = self.run_preprocessing(config)
                 working_input = preprocessed_dir
 
-            processed, crops_saved, detection_failed = self.run_detection(config, working_input)
+            processed = 0
+            crops_saved = 0
+            detection_failed = 0
+            if config.fin_detection:
+                processed, crops_saved, detection_failed = self.run_detection(config, working_input)
             summary = PipelineSummary(
                 completed=True,
                 converted=converted,
                 conversion_failed=conversion_failed,
+                preprocessing_failed_files=preprocessing_failed_files,
                 processed=processed,
                 crops_saved=crops_saved,
                 detection_failed=detection_failed,
@@ -839,8 +894,8 @@ class FinDetectionApp:
         finally:
             self.post("pipeline_finished", summary)
 
-    def run_preprocessing(self, config: PipelineConfig) -> tuple[int, int, Path]:
-        jpeg_quality = validate_jpeg_quality(DEFAULT_JPEG_QUALITY)
+    def run_preprocessing(self, config: PipelineConfig) -> tuple[int, int, Path, tuple[str, ...]]:
+        jpeg_quality = validate_jpeg_quality(config.jpeg_quality)
         gc_interval = validate_gc_interval(DEFAULT_GC_INTERVAL)
         preprocessed_dir = config.output_dir / "preprocessed_images"
         if preprocessed_dir.exists():
@@ -860,13 +915,15 @@ class FinDetectionApp:
         total_files, total_input_size = scan_input_files(config.input_dir, exclude_dir)
         self.post(
             "log",
-            f"Preprocessing {total_files} files to JPEG ({format_file_size(total_input_size)} source data).",
+            f"Preprocessing {total_files} files to JPEG at quality {jpeg_quality} "
+            f"({format_file_size(total_input_size)} source data).",
         )
         if total_files == 0:
             raise RuntimeError("No files found to preprocess.")
 
         converted = 0
         failed = 0
+        failed_files: list[str] = []
         target_path_counts: dict[Path, int] = {}
         for index, source_path in enumerate(iter_source_files(config.input_dir, exclude_dir), start=1):
             self.raise_if_stopped()
@@ -882,7 +939,9 @@ class FinDetectionApp:
                 converted += 1
             except Exception as exc:
                 failed += 1
-                self.post("log", f"Could not preprocess {relative_path}: {exc}")
+                failed_message = f"{relative_path}: {exc}"
+                failed_files.append(failed_message)
+                self.post("log", f"Could not preprocess {failed_message}")
             finally:
                 if gc_interval and index % gc_interval == 0:
                     import gc
@@ -899,7 +958,7 @@ class FinDetectionApp:
 
         self.post("log", f"Preprocessing done. Converted {converted}; failed {failed}.")
         self.post("log", f"Preprocessed JPEGs: {preprocessed_dir}")
-        return converted, failed, preprocessed_dir
+        return converted, failed, preprocessed_dir, tuple(failed_files)
 
     def run_detection(self, config: PipelineConfig, input_dir: Path) -> tuple[int, int, int]:
         exclude_dir = (
@@ -966,10 +1025,20 @@ class FinDetectionApp:
 
         if summary.completed:
             self.set_progress(1, 1, "Pipeline complete")
-            self.log(
-                "Done. "
-                f"Processed {summary.processed} images and saved {summary.crops_saved} fin crops."
-            )
+            if summary.preprocessed_dir is not None:
+                self.log(
+                    "Preprocessing complete. "
+                    f"Converted {summary.converted} images; failed {summary.conversion_failed}."
+                )
+                if summary.preprocessing_failed_files:
+                    self.log("Failed preprocessing files:")
+                    for failed_file in summary.preprocessing_failed_files:
+                        self.log(f"- {failed_file}")
+            if summary.processed:
+                self.log(
+                    "Fin detection complete. "
+                    f"Processed {summary.processed} images and saved {summary.crops_saved} fin crops."
+                )
             if summary.output_dir is not None:
                 self.log(f"Results saved in: {summary.output_dir}")
         else:
