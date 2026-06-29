@@ -67,32 +67,13 @@ MODEL_OPTIONS = {
 
 MODEL_BADGE_MAX_SIZE = (160, 86)
 MODEL_BADGE_CANDIDATES = {
-    "Orca": (
-        ASSETS_DIR / "orca_model.png",
-        ASSETS_DIR / "orca_model.jpg",
-        ASSETS_DIR / "orca_model.jpeg",
-        ASSETS_DIR / "norwegian_orca_survey.png",
-        ASSETS_DIR / "norwegian_orca_survey.jpg",
-        ASSETS_DIR / "norwegian_orca_survey.jpeg",
-    ),
-    "Risso": (
-        ASSETS_DIR / "risso_model.png",
-        ASSETS_DIR / "risso_model.jpg",
-        ASSETS_DIR / "risso_model.jpeg",
-        ASSETS_DIR / "risso_dolphin.png",
-        ASSETS_DIR / "risso_dolphin.jpg",
-        ASSETS_DIR / "risso_dolphin.jpeg",
-    ),
+    "Orca": ASSETS_DIR / "orca_model.png",
+    "Risso": ASSETS_DIR / "risso_model.jpeg"
 }
 
 IMAGE_EXTENSIONS = {
-    ".bmp",
     ".jpeg",
     ".jpg",
-    ".png",
-    ".tif",
-    ".tiff",
-    ".webp",
 }
 
 
@@ -301,7 +282,7 @@ class FinDetectionApp:
 
         ttk.Label(
             header_frame,
-            text="Choose folders, pick a fin model, start the local recognizer, and run the crop pipeline.",
+            text="Choose folders, pick a fin model, start the local recognizer, and run the crop pipeline. Or just do image preprocessing from many raw formats for jpeg.",
             style="Subtitle.TLabel",
         ).grid(row=1, column=0, sticky="w", pady=(2, 0))
 
@@ -836,6 +817,19 @@ class FinDetectionApp:
             )
             return None
 
+        if fin_detection and not preprocess:
+            exclude_dir = output_dir if is_relative_to(output_dir, input_dir) else None
+            first_raw_file = find_first_raw_file(input_dir, exclude_dir)
+            if first_raw_file is not None:
+                messagebox.showwarning(
+                    "RAW files require preprocessing",
+                    "Fin detection accepts JPEG files only.\n\n"
+                    "RAW files were found in the input folder. Enable Preprocessing to convert them "
+                    "to JPEG before running fin detection.\n\n"
+                    f"First RAW file found:\n{first_raw_file.relative_to(input_dir)}",
+                )
+                return None
+
         jpeg_quality = DEFAULT_JPEG_QUALITY
         if preprocess:
             try:
@@ -970,7 +964,10 @@ class FinDetectionApp:
         total_images = len(image_paths)
         self.post("log", f"Found {total_images} images for fin recognition.")
         if total_images == 0:
-            raise RuntimeError("No supported images found for fin recognition.")
+            raise RuntimeError(
+                "No JPEG images found for fin recognition. "
+                "Enable preprocessing for RAW, TIFF, or other image formats."
+            )
 
         processed = 0
         crops_saved = 0

@@ -1,6 +1,7 @@
 import argparse
 import gc
 import os
+import shutil
 import sys
 import time
 from datetime import datetime
@@ -19,6 +20,7 @@ INPUT_DIR = "/Users/paul/Desktop/NOS/FinDetection/rissos_cropping_dataset"
 OUTPUT_DIR = "/Users/paul/Desktop/NOS/FinDetection/rissos_cropping_dataset_jpeg"
 JPEG_QUALITY = 75
 GC_INTERVAL = 500
+JPEG_COPY_THRESHOLD_MB = 5
 
 
 RAW_EXTENSIONS = {
@@ -216,6 +218,13 @@ def validate_gc_interval(gc_interval):
 
 
 def save_as_jpeg(source_path, target_path, jpeg_quality):
+    if (
+        source_path.suffix.lower() in {".jpg", ".jpeg"}
+        and source_path.stat().st_size < JPEG_COPY_THRESHOLD_MB * 1024 * 1024
+    ):
+        shutil.copy2(source_path, target_path)
+        return
+
     if source_path.suffix.lower() in RAW_EXTENSIONS:
         image = open_raw_image(source_path)
         try:
