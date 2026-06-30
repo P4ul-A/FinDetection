@@ -5,6 +5,7 @@ import shutil
 import sys
 import time
 from datetime import datetime
+from io import BytesIO
 from pathlib import Path
 
 from PIL import Image, UnidentifiedImageError
@@ -228,7 +229,12 @@ def save_as_jpeg(source_path, target_path, jpeg_quality):
     if source_path.suffix.lower() in RAW_EXTENSIONS:
         image = open_raw_image(source_path)
         try:
-            save_image(image, target_path, jpeg_quality)
+            save_image(
+                image,
+                target_path,
+                jpeg_quality,
+                exif=image.info.get("exif"),
+            )
         finally:
             image.close()
         return
@@ -267,14 +273,36 @@ def open_raw_image(source_path):
     if rawpy is None:
         raise RuntimeError("RAW image support requires rawpy. Install it with: pip install rawpy")
 
-    with rawpy.imread(str(source_path)) as raw:
-        rgb = raw.postprocess()
+    try:
+        with rawpy.imread(str(source_path)) as raw:
+            rgb = raw.postprocess()
+    except rawpy.LibRawFileUnsupportedError:
+        with rawpy.imread(str(source_path)) as raw:
+            return open_embedded_raw_preview(raw)
 
     image = Image.fromarray(rgb)
     image.load()
     del rgb
 
     return image
+
+
+def open_embedded_raw_preview(raw):
+    thumbnail = raw.extract_thumb()
+
+    if thumbnail.format == rawpy.ThumbFormat.JPEG:
+        with Image.open(BytesIO(thumbnail.data)) as preview:
+            preview.load()
+            image = preview.copy()
+            image.info.update(preview.info)
+            return image
+
+    if thumbnail.format == rawpy.ThumbFormat.BITMAP:
+        image = Image.fromarray(thumbnail.data)
+        image.load()
+        return image
+
+    raise RuntimeError("RAW decoding failed and the file has no supported embedded preview")
 
 
 def prepare_for_jpeg(image):

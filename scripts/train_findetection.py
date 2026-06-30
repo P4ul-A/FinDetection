@@ -64,8 +64,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--model",
-        default="yolo11n.pt",
-        help="Pretrained YOLO weights to fine tune, for example yolo11n.pt or yolov8n.pt.",
+        default="base_models/yolo11n.pt",
+        help=(
+            "Pretrained YOLO weights to fine tune, for example "
+            "base_models/yolo11n.pt or base_models/yolov8n.pt."
+        ),
     )
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--imgsz", type=int, default=640)

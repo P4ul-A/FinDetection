@@ -39,7 +39,7 @@ from scripts.picture_preprocessing import (
 
 
 APP_DIR = Path(__file__).resolve().parent
-ASSETS_DIR = APP_DIR / "assets"
+MODELS_DIR = APP_DIR / "models"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
 DEFAULT_BASE_URL = f"http://{DEFAULT_HOST}:{DEFAULT_PORT}/api/inference"
@@ -60,16 +60,10 @@ SERVER_ERROR_MARKERS = (
     "Address already in use",
 )
 
-MODEL_OPTIONS = {
-    "Risso": APP_DIR / "deployment_model_risso.pt",
-    "Orca": APP_DIR / "deployment_model_orca.pt",
-}
-
 MODEL_BADGE_MAX_SIZE = (160, 86)
-MODEL_BADGE_CANDIDATES = {
-    "Orca": ASSETS_DIR / "orca_model.png",
-    "Risso": ASSETS_DIR / "risso_model.jpeg"
-}
+MODEL_PREFIX = "model_"
+LOGO_PREFIX = "logo_"
+LOGO_EXTENSIONS = (".png", ".jpeg")
 
 IMAGE_EXTENSIONS = {
     ".jpeg",
@@ -96,6 +90,7 @@ class PipelineSummary:
     completed: bool
     converted: int = 0
     conversion_failed: int = 0
+    preprocessing_output_size: int = 0
     preprocessing_failed_files: tuple[str, ...] = ()
     processed: int = 0
     crops_saved: int = 0
@@ -130,7 +125,8 @@ class FinDetectionApp:
         self.preprocess_var = tk.BooleanVar(value=False)
         self.fin_detection_var = tk.BooleanVar(value=True)
         self.jpeg_quality_var = tk.IntVar(value=DEFAULT_JPEG_QUALITY)
-        self.model_var = tk.StringVar(value="Risso")
+        self.model_options = discover_model_options()
+        self.model_var = tk.StringVar(value=next(iter(self.model_options), ""))
         self.server_status_var = tk.StringVar(value="Server stopped")
         self.pipeline_status_var = tk.StringVar(value="Ready")
         self.progress_label_var = tk.StringVar(value="Waiting to start")
@@ -282,7 +278,10 @@ class FinDetectionApp:
 
         ttk.Label(
             header_frame,
-            text="Choose folders, pick a fin model, start the local recognizer, and run the crop pipeline. Or just do image preprocessing from many raw formats for jpeg.",
+            text=(
+                "Choose folders, pick a fin model, start the local recognizer, and run the crop pipeline.\n"
+                "Or just do image preprocessing from many raw formats to jpeg."
+            ),
             style="Subtitle.TLabel",
         ).grid(row=1, column=0, sticky="w", pady=(2, 0))
 
@@ -312,7 +311,7 @@ class FinDetectionApp:
         self.model_combo = ttk.Combobox(
             setup_panel,
             textvariable=self.model_var,
-            values=tuple(MODEL_OPTIONS.keys()),
+            values=tuple(self.model_options),
             state="readonly",
             width=16,
         )
@@ -414,8 +413,11 @@ class FinDetectionApp:
 
     def create_model_badges(self) -> dict[str, ImageTk.PhotoImage]:
         badges: dict[str, ImageTk.PhotoImage] = {}
-        for model_name, candidate_paths in MODEL_BADGE_CANDIDATES.items():
-            badge = load_model_badge(candidate_paths)
+        for model_name, model_path in self.model_options.items():
+            image_path = find_model_logo(model_path)
+            if image_path is None:
+                continue
+            badge = load_model_badge(image_path)
             if badge is not None:
                 badges[model_name] = ImageTk.PhotoImage(badge)
         return badges
@@ -543,9 +545,12 @@ class FinDetectionApp:
             return True
 
         model_name = self.model_var.get()
-        model_path = MODEL_OPTIONS.get(model_name)
+        model_path = self.model_options.get(model_name)
         if model_path is None:
-            messagebox.showerror("Unknown model", "Choose Risso or Orca before starting the server.")
+            messagebox.showerror(
+                "No model available",
+                f"Add a {MODEL_PREFIX}<name>.pt file to:\n{MODELS_DIR}",
+            )
             return False
         if not model_path.exists():
             messagebox.showerror("Missing model", f"Could not find model weights:\n{model_path}")
@@ -853,6 +858,7 @@ class FinDetectionApp:
             working_input = config.input_dir
             converted = 0
             conversion_failed = 0
+            preprocessing_output_size = 0
             preprocessing_failed_files: tuple[str, ...] = ()
             preprocessed_dir = None
 
@@ -860,7 +866,13 @@ class FinDetectionApp:
             self.post("log", f"Output folder: {config.output_dir}")
 
             if config.preprocess:
-                converted, conversion_failed, preprocessed_dir, preprocessing_failed_files = self.run_preprocessing(config)
+                (
+                    converted,
+                    conversion_failed,
+                    preprocessing_output_size,
+                    preprocessed_dir,
+                    preprocessing_failed_files,
+                ) = self.run_preprocessing(config)
                 working_input = preprocessed_dir
 
             processed = 0
@@ -872,6 +884,7 @@ class FinDetectionApp:
                 completed=True,
                 converted=converted,
                 conversion_failed=conversion_failed,
+                preprocessing_output_size=preprocessing_output_size,
                 preprocessing_failed_files=preprocessing_failed_files,
                 processed=processed,
                 crops_saved=crops_saved,
@@ -888,11 +901,19 @@ class FinDetectionApp:
         finally:
             self.post("pipeline_finished", summary)
 
-    def run_preprocessing(self, config: PipelineConfig) -> tuple[int, int, Path, tuple[str, ...]]:
+    def run_preprocessing(
+        self,
+        config: PipelineConfig,
+    ) -> tuple[int, int, int, Path, tuple[str, ...]]:
         jpeg_quality = validate_jpeg_quality(config.jpeg_quality)
         gc_interval = validate_gc_interval(DEFAULT_GC_INTERVAL)
-        preprocessed_dir = config.output_dir / "preprocessed_images"
-        if preprocessed_dir.exists():
+        preprocessing_only = not config.fin_detection
+        preprocessed_dir = (
+            config.output_dir
+            if preprocessing_only
+            else config.output_dir / "preprocessed_images"
+        )
+        if not preprocessing_only and preprocessed_dir.exists():
             shutil.rmtree(preprocessed_dir)
         preprocessed_dir.mkdir(parents=True, exist_ok=True)
         exclude_dir = config.output_dir if is_relative_to(config.output_dir, config.input_dir) else preprocessed_dir
@@ -917,6 +938,7 @@ class FinDetectionApp:
 
         converted = 0
         failed = 0
+        total_output_size = 0
         failed_files: list[str] = []
         target_path_counts: dict[Path, int] = {}
         for index, source_path in enumerate(iter_source_files(config.input_dir, exclude_dir), start=1):
@@ -931,6 +953,7 @@ class FinDetectionApp:
                 save_as_jpeg(source_path, target_path, jpeg_quality)
                 shutil.copystat(source_path, target_path, follow_symlinks=True)
                 converted += 1
+                total_output_size += target_path.stat().st_size
             except Exception as exc:
                 failed += 1
                 failed_message = f"{relative_path}: {exc}"
@@ -950,9 +973,13 @@ class FinDetectionApp:
                     ),
                 )
 
-        self.post("log", f"Preprocessing done. Converted {converted}; failed {failed}.")
+        self.post(
+            "log",
+            f"Preprocessing done. Converted {converted}; failed {failed}; "
+            f"output size {format_file_size(total_output_size)}.",
+        )
         self.post("log", f"Preprocessed JPEGs: {preprocessed_dir}")
-        return converted, failed, preprocessed_dir, tuple(failed_files)
+        return converted, failed, total_output_size, preprocessed_dir, tuple(failed_files)
 
     def run_detection(self, config: PipelineConfig, input_dir: Path) -> tuple[int, int, int]:
         exclude_dir = (
@@ -972,26 +999,26 @@ class FinDetectionApp:
         processed = 0
         crops_saved = 0
         failed = 0
+        no_detection_files: list[str] = []
         for index, image_path in enumerate(image_paths, start=1):
             self.raise_if_stopped()
             relative_label = image_path.relative_to(input_dir)
-            self.post("log", f"Processing {relative_label}")
             try:
                 detections = request_detections(image_path, config.base_url)
             except Exception as exc:
                 failed += 1
                 self.post("log", f"Detection failed for {relative_label}: {exc}")
                 detections = []
-
-            if not detections:
-                self.post("log", f"No fins detected in {relative_label}")
             else:
-                output_dir = config.output_dir / image_path.parent.relative_to(input_dir)
-                output_dir.mkdir(parents=True, exist_ok=True)
-                for crop_index, detection in enumerate(detections):
-                    output_file = output_dir / f"{image_path.stem}_cropped_{crop_index}.JPG"
-                    save_base64_image(detection, output_file)
-                    crops_saved += 1
+                if not detections:
+                    no_detection_files.append(str(relative_label))
+                else:
+                    output_dir = config.output_dir / image_path.parent.relative_to(input_dir)
+                    output_dir.mkdir(parents=True, exist_ok=True)
+                    for crop_index, detection in enumerate(detections):
+                        output_file = output_dir / f"{image_path.stem}_cropped_{crop_index}.JPG"
+                        save_base64_image(detection, output_file)
+                        crops_saved += 1
 
             processed += 1
             self.post(
@@ -1007,6 +1034,10 @@ class FinDetectionApp:
             "log",
             f"Fin recognition done. Processed {processed}; saved {crops_saved} crops; failed {failed}.",
         )
+        if no_detection_files:
+            self.post("log", f"No fins detected in {len(no_detection_files)} images:")
+            for relative_path in no_detection_files:
+                self.post("log", f"- {relative_path}")
         return processed, crops_saved, failed
 
     def raise_if_stopped(self) -> None:
@@ -1025,7 +1056,8 @@ class FinDetectionApp:
             if summary.preprocessed_dir is not None:
                 self.log(
                     "Preprocessing complete. "
-                    f"Converted {summary.converted} images; failed {summary.conversion_failed}."
+                    f"Converted {summary.converted} images; failed {summary.conversion_failed}; "
+                    f"output size {format_file_size(summary.preprocessing_output_size)}."
                 )
                 if summary.preprocessing_failed_files:
                     self.log("Failed preprocessing files:")
@@ -1073,15 +1105,38 @@ def is_probable_exception_summary(line: str) -> bool:
     return summary.endswith(("Error", "Exception"))
 
 
-def load_model_badge(candidate_paths: tuple[Path, ...]) -> Image.Image | None:
-    for image_path in candidate_paths:
-        if not image_path.is_file():
+def discover_model_options(models_dir: Path = MODELS_DIR) -> dict[str, Path]:
+    options: dict[str, Path] = {}
+    if not models_dir.is_dir():
+        return options
+
+    for model_path in sorted(models_dir.glob(f"{MODEL_PREFIX}*.pt")):
+        model_identifier = model_path.stem.removeprefix(MODEL_PREFIX).strip("_")
+        if not model_identifier:
             continue
-        with Image.open(image_path) as image:
-            badge = image.convert("RGBA")
-            badge.thumbnail(MODEL_BADGE_MAX_SIZE, Image.Resampling.LANCZOS)
-            return badge
+        display_name = model_identifier.replace("_", " ")
+        display_name = display_name[:1].upper() + display_name[1:]
+        options[display_name] = model_path
+    return options
+
+
+def find_model_logo(model_path: Path) -> Path | None:
+    model_identifier = model_path.stem.removeprefix(MODEL_PREFIX)
+    for extension in LOGO_EXTENSIONS:
+        logo_path = model_path.parent / f"{LOGO_PREFIX}{model_identifier}{extension}"
+        if logo_path.is_file():
+            return logo_path
     return None
+
+
+def load_model_badge(image_path: Path) -> Image.Image | None:
+    if not image_path.is_file():
+        return None
+
+    with Image.open(image_path) as image:
+        badge = image.convert("RGBA")
+        badge.thumbnail(MODEL_BADGE_MAX_SIZE, Image.Resampling.LANCZOS)
+        return badge
 
 
 def find_first_raw_file(directory: Path, exclude_dir: Path | None = None) -> Path | None:

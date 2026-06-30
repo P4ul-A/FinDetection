@@ -28,7 +28,7 @@ from PIL import Image, ImageOps
 from ultralytics import YOLO
 
 
-DEFAULT_MODEL_PATH = Path("deployment_model_risso.pt")
+DEFAULT_MODEL_PATH = Path("models/model_risso.pt")
 LOGGER = logging.getLogger("findetection_server")
 
 
